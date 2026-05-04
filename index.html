@@ -682,6 +682,13 @@
 <div id="toast"></div>
 
 <script>
+// Global error guard - prevents firebase errors from killing page functions
+window.addEventListener('error', function(e) {
+  if (e.message && e.message.includes('firebase')) {
+    console.warn('Firebase error caught:', e.message);
+    e.preventDefault();
+  }
+});
 // ════════════════════════════════════════════════
 //  ██████  ██████  ███    ██ ███████ ██  ██████
 // ██      ██    ██ ████   ██ ██      ██ ██
@@ -694,24 +701,29 @@
 //  ██████████████████████████████████████████
 // ════════════════════════════════════════════════
 const FIREBASE_CONFIG = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSy...",          // ← your real key
+  authDomain: "myapp.firebaseapp.com",
+  projectId: "myapp-12345",
+  storageBucket: "myapp.appspot.com",
+  messagingSenderId: "123456789",
+  appId: "1:123:web:abc123"
 };
 // ════════════════════════════════════════════════
 
 // ─── INIT FIREBASE ───
 let app, auth, db, storage;
-try {
-  app = firebase.initializeApp(FIREBASE_CONFIG);
-  auth = firebase.auth();
-  db = firebase.firestore();
-  storage = firebase.storage();
-} catch(e) {
-  console.warn("Firebase init failed – running in demo mode", e);
+const IS_DEMO = !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey === "YOUR_API_KEY";
+if (!IS_DEMO) {
+  try {
+    app = firebase.initializeApp(FIREBASE_CONFIG);
+    auth = firebase.auth();
+    db = firebase.firestore();
+    storage = firebase.storage();
+  } catch(e) {
+    console.warn("Firebase init failed – running in demo mode", e);
+  }
+} else {
+  console.info("No Firebase config detected – running in demo mode");
 }
 
 // ─── CONSTANTS ───
@@ -1389,7 +1401,7 @@ document.getElementById('rptDate').value = today();
 document.getElementById('rptMonth').value = today().slice(0,7);
 
 // ─── HANDLE DEMO MODE (no firebase config) ───
-if (!auth) {
+if (IS_DEMO || !auth) {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';
   currentUser = { uid:'demo', email:'admin@school.edu' };
