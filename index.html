@@ -689,17 +689,11 @@ window.addEventListener('error', function(e) {
     e.preventDefault();
   }
 });
-// ════════════════════════════════════════════════
-//  ██████  ██████  ███    ██ ███████ ██  ██████
-// ██      ██    ██ ████   ██ ██      ██ ██
-// ██      ██    ██ ██ ██  ██ █████   ██ ██   ███
-// ██      ██    ██ ██  ██ ██ ██      ██ ██    ██
-//  ██████  ██████  ██   ████ ██      ██  ██████
-//
-//  ██████████████████████████████████████████
-//  REPLACE THIS SECTION WITH YOUR FIREBASE CONFIG
-//  ██████████████████████████████████████████
-// ════════════════════════════════════════════════
+/import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyAyzsNkoPIbs5pcYNZQy7WQLaLnj_3HmUw",
   authDomain: "edutrack-school-e1c26.firebaseapp.com",
@@ -709,11 +703,14 @@ const firebaseConfig = {
   appId: "1:825219056599:web:352d7c2492fc442b678192"
 };
 
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+
 // ════════════════════════════════════════════════
 
 // ─── INIT FIREBASE ───
 let app, auth, db, storage;
-const IS_DEMO = !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey === "YOUR_API_KEY";
+const IS_DEMO = !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey === "AIzaSyAyzsNkoPIbs5pcYNZQy7WQLaLnj_3HmUw";
 if (!IS_DEMO) {
   try {
     app = firebase.initializeApp(FIREBASE_CONFIG);
