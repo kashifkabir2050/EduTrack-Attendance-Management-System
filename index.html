@@ -682,17 +682,7 @@
 <div id="toast"></div>
 
 <script>
-// Global error guard - prevents firebase errors from killing page functions
-window.addEventListener('error', function(e) {
-  if (e.message && e.message.includes('firebase')) {
-    console.warn('Firebase error caught:', e.message);
-    e.preventDefault();
-  }
-});
-
-// ════════════════════════════════════════════════
-
-// ─── INIT FIREBASE ───
+// ─── FIREBASE CONFIG ───
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyAyzsNkoPIbs5pcYNZQy7WQLaLnj_3HmUw",
   authDomain: "edutrack-school-e1c26.firebaseapp.com",
@@ -702,133 +692,125 @@ const FIREBASE_CONFIG = {
   appId: "1:825219056599:web:352d7c2492fc442b678192"
 };
 
-let app, auth, db, storage;
-const IS_DEMO = !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey === "YOUR_API_KEY";
-if (!IS_DEMO) {
-  try {
-    app = firebase.initializeApp(FIREBASE_CONFIG);
-    auth = firebase.auth();
-    db = firebase.firestore();
-    storage = firebase.storage();
-  } catch(e) {
-    console.warn("Firebase init failed – running in demo mode", e);
-  }
-} else {
-  console.info("No Firebase config detected – running in demo mode");
+// ─── INIT FIREBASE ───
+var app, auth, db, storage;
+try {
+  app = firebase.initializeApp(FIREBASE_CONFIG);
+  auth = firebase.auth(app);
+  db = firebase.firestore(app);
+  storage = firebase.storage(app);
+  console.log("Firebase ready");
+} catch(e) {
+  console.error("Firebase init error:", e.message);
 }
 
 // ─── CONSTANTS ───
-const GRADES = ['KG1','KG2','Grade 1','Grade 2','Grade 3','Grade 4','Grade 5','Grade 6',
-                'Grade 7','Grade 8','Grade 9','Grade 10','Grade 11','Grade 12'];
-const SECTIONS = ['A','B','C','D','E','F','AB','BB','CB','DB','AG','BG','CG','DG'];
+var GRADES = ['KG1','KG2','Grade 1','Grade 2','Grade 3','Grade 4','Grade 5','Grade 6',
+              'Grade 7','Grade 8','Grade 9','Grade 10','Grade 11','Grade 12'];
+var SECTIONS = ['A','B','C','D','E','F','AB','BB','CB','DB','AG','BG','CG','DG'];
 
 // ─── STATE ───
-let currentUser = null;
-let currentUserData = null;
-let allStudents = [];
-let attendanceState = {};
-let weeklyChartInst = null;
-let classChartInst = null;
-let monthlyChartInst = null;
+var currentUser = null;
+var currentUserData = null;
+var allStudents = [];
+var attendanceState = {};
+var weeklyChartInst = null;
+var classChartInst = null;
+var monthlyChartInst = null;
 
 // ─── UTILS ───
-function showToast(msg, type='') {
-  const t = document.getElementById('toast');
+function showToast(msg, type) {
+  var t = document.getElementById('toast');
   t.textContent = msg;
-  t.className = type ? `show ${type}` : 'show';
-  setTimeout(()=>{ t.className = ''; }, 3500);
+  t.className = type ? ('show ' + type) : 'show';
+  setTimeout(function(){ t.className = ''; }, 3500);
 }
-
-function today() {
-  return new Date().toISOString().slice(0,10);
-}
-
-function closeModal(id) {
-  document.getElementById(id).classList.add('hidden');
-}
-
-function openModal(id) {
-  document.getElementById(id).classList.remove('hidden');
-}
+function today() { return new Date().toISOString().slice(0,10); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
 
 function populateGradeDropdowns() {
-  const ids = ['filterGrade','sGrade','attGrade','rptGrade','rptMGrade','uGrade'];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
+  var ids = ['filterGrade','sGrade','attGrade','rptGrade','rptMGrade','uGrade'];
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
     if (!el) return;
-    const hasAll = el.querySelector('option[value=""]');
-    const startOpt = hasAll ? `<option value="">All Grades</option>` : `<option value="">Select Grade</option>`;
-    el.innerHTML = startOpt + GRADES.map(g=>`<option value="${g}">${g}</option>`).join('');
+    var allOpts = ['filterGrade','rptGrade','rptMGrade','uGrade'].indexOf(id) >= 0;
+    var html = allOpts ? '<option value="">All Grades</option>' : '<option value="">Select Grade</option>';
+    GRADES.forEach(function(g){ html += '<option value="'+g+'">'+g+'</option>'; });
+    el.innerHTML = html;
   });
 }
-
 function populateSectionDropdowns() {
-  const ids = ['filterSection','sSection','attSection','rptSection','rptMSection','uSection'];
-  ids.forEach(id => {
-    const el = document.getElementById(id);
+  var ids = ['filterSection','sSection','attSection','rptSection','rptMSection','uSection'];
+  ids.forEach(function(id) {
+    var el = document.getElementById(id);
     if (!el) return;
-    const hasAll = ['filterSection','rptSection','rptMSection','uSection'].includes(id);
-    const startOpt = hasAll ? `<option value="">All Sections</option>` : `<option value="">Select Section</option>`;
-    el.innerHTML = startOpt + SECTIONS.map(s=>`<option value="${s}">${s}</option>`).join('');
+    var allOpts = ['filterSection','rptSection','rptMSection','uSection'].indexOf(id) >= 0;
+    var html = allOpts ? '<option value="">All Sections</option>' : '<option value="">Select Section</option>';
+    SECTIONS.forEach(function(s){ html += '<option value="'+s+'">'+s+'</option>'; });
+    el.innerHTML = html;
   });
-}
-
-function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
 }
 
 // ─── AUTH ───
-auth && auth.onAuthStateChanged(async user => {
-  if (user) {
-    currentUser = user;
-    // Get user data from Firestore
-    try {
-      const snap = await db.collection('users').doc(user.uid).get();
-      currentUserData = snap.exists ? snap.data() : { name: user.email, role: 'teacher' };
-    } catch(e) {
-      currentUserData = { name: user.email, role: 'teacher' };
+if (auth) {
+  auth.onAuthStateChanged(function(user) {
+    if (user) {
+      currentUser = user;
+      db.collection('users').doc(user.uid).get().then(function(snap) {
+        currentUserData = snap.exists ? snap.data() : { name: user.email, role: 'teacher' };
+        initApp();
+      }).catch(function() {
+        currentUserData = { name: user.email, role: 'teacher' };
+        initApp();
+      });
+    } else {
+      document.getElementById('loginScreen').style.display = 'flex';
+      document.getElementById('appShell').style.display = 'none';
     }
-    initApp();
-  } else {
-    document.getElementById('loginScreen').style.display = 'flex';
-    document.getElementById('appShell').style.display = 'none';
-  }
-});
+  });
+}
 
-async function handleLogin() {
-  const email = document.getElementById('loginEmail').value.trim();
-  const pass = document.getElementById('loginPassword').value;
-  const errEl = document.getElementById('loginError');
+function handleLogin() {
+  var email = document.getElementById('loginEmail').value.trim();
+  var pass = document.getElementById('loginPassword').value;
+  var errEl = document.getElementById('loginError');
   errEl.textContent = '';
   if (!email || !pass) { errEl.textContent = 'Please enter email and password.'; return; }
-  try {
-    await auth.signInWithEmailAndPassword(email, pass);
-  } catch(e) {
-    errEl.textContent = e.message || 'Login failed. Please try again.';
-  }
+  if (!auth) { errEl.textContent = 'Firebase not loaded. Check console.'; return; }
+  auth.signInWithEmailAndPassword(email, pass).catch(function(e) {
+    var msgs = {
+      'auth/invalid-email': 'Invalid email address.',
+      'auth/user-not-found': 'No account with this email. Add user in Firebase Console.',
+      'auth/wrong-password': 'Incorrect password.',
+      'auth/invalid-credential': 'Wrong email or password.',
+      'auth/too-many-requests': 'Too many attempts. Try again later.',
+      'auth/api-key-not-valid': 'Invalid API key in config.'
+    };
+    errEl.textContent = msgs[e.code] || e.message || 'Login failed.';
+  });
 }
 
 function handleLogout() {
-  auth && auth.signOut();
+  if (auth) auth.signOut();
 }
 
 // ─── INIT APP ───
 function initApp() {
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appShell').style.display = 'flex';
+  document.getElementById('configNotice').style.display = 'none';
   document.getElementById('todayDate').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
   document.getElementById('sidebarName').textContent = currentUserData.name || currentUser.email;
-  document.getElementById('sidebarRole').textContent = (currentUserData.role||'teacher').charAt(0).toUpperCase()+(currentUserData.role||'teacher').slice(1);
-  document.getElementById('sidebarAvatar').textContent = (currentUserData.name||currentUser.email)[0].toUpperCase();
+  var role = currentUserData.role || 'teacher';
+  document.getElementById('sidebarRole').textContent = role.charAt(0).toUpperCase() + role.slice(1);
+  document.getElementById('sidebarAvatar').textContent = (currentUserData.name || currentUser.email)[0].toUpperCase();
   document.getElementById('attDate').value = today();
-
-  // Hide admin nav if not admin
   if (currentUserData.role !== 'admin') {
-    document.querySelectorAll('.admin-only').forEach(el=>el.style.display='none');
+    document.querySelectorAll('.admin-only').forEach(function(el){ el.style.display='none'; });
   }
-  if (window.innerWidth < 768) {
-    document.getElementById('menuBtn').style.display = 'block';
-  }
+  if (window.innerWidth < 768) document.getElementById('menuBtn').style.display = 'block';
   populateGradeDropdowns();
   populateSectionDropdowns();
   showPage('dashboard');
@@ -837,125 +819,106 @@ function initApp() {
 
 // ─── NAVIGATION ───
 function showPage(page) {
-  document.querySelectorAll('.page-section').forEach(s=>s.classList.add('hidden'));
-  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.querySelectorAll('.page-section').forEach(function(s){ s.classList.add('hidden'); });
+  document.querySelectorAll('.nav-item').forEach(function(n){ n.classList.remove('active'); });
   document.getElementById('page-'+page).classList.remove('hidden');
-  const navEl = document.getElementById('nav-'+page);
+  var navEl = document.getElementById('nav-'+page);
   if (navEl) navEl.classList.add('active');
-
-  const titles = {
-    'dashboard':'Dashboard', 'students':'Students', 'attendance':'Mark Attendance',
-    'daily-report':'Daily Report', 'monthly-report':'Monthly Report', 'admin':'Admin Panel'
-  };
+  var titles = {'dashboard':'Dashboard','students':'Students','attendance':'Mark Attendance',
+                'daily-report':'Daily Report','monthly-report':'Monthly Report','admin':'Admin Panel'};
   document.getElementById('pageTitle').textContent = titles[page] || page;
-
   if (page === 'dashboard') loadDashboard();
   if (page === 'admin') loadUsers();
 }
 
 // ─── STUDENTS CRUD ───
-async function loadAllStudents() {
-  try {
-    const snap = await db.collection('students').orderBy('name').get();
-    allStudents = snap.docs.map(d=>({id:d.id, ...d.data()}));
+function loadAllStudents() {
+  db.collection('students').orderBy('name').get().then(function(snap) {
+    allStudents = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     renderStudentsTable(allStudents);
-  } catch(e) {
+  }).catch(function() {
     allStudents = [];
     renderStudentsTable([]);
-    if (e.code === 'unavailable' || e.code === 'not-found') {
-      document.getElementById('studentsTableBody').innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px;">Configure Firebase to load data.</td></tr>`;
-    }
-  }
+  });
 }
 
 function renderStudentsTable(students) {
-  const tbody = document.getElementById('studentsTableBody');
+  var tbody = document.getElementById('studentsTableBody');
   if (!students.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px;">No students found.</td></tr>`;
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px;">No students found.</td></tr>';
     return;
   }
-  tbody.innerHTML = students.map(s=>`
-    <tr class="student-row">
-      <td>
-        ${s.photoURL
-          ? `<img src="${s.photoURL}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;">`
-          : `<div style="width:36px;height:36px;border-radius:8px;background:#e0e7ff;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--accent);font-size:14px;">${(s.name||'?')[0].toUpperCase()}</div>`}
-      </td>
-      <td>${s.name}</td>
-      <td><code style="font-size:12px;background:#f3f4f6;padding:2px 7px;border-radius:5px;">${s.studentId||''}</code></td>
-      <td>${s.fatherName||'—'}</td>
-      <td><code style="font-size:12px;background:#f3f4f6;padding:2px 7px;border-radius:5px;">${s.parentId||'—'}</code></td>
-      <td>${s.grade||'—'}</td>
-      <td>${s.section||'—'}</td>
-      <td>${s.session||'—'}</td>
-      <td>
-        <div style="display:flex;gap:6px;">
-          <button class="btn-secondary btn-sm" onclick="editStudent('${s.id}')">Edit</button>
-          <button class="btn-danger btn-sm" onclick="deleteStudent('${s.id}','${s.name}')">Del</button>
-        </div>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = students.map(function(s) {
+    var photo = s.photoURL
+      ? '<img src="'+s.photoURL+'" style="width:36px;height:36px;border-radius:8px;object-fit:cover;">'
+      : '<div style="width:36px;height:36px;border-radius:8px;background:#e0e7ff;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--accent);font-size:14px;">'+(s.name||'?')[0].toUpperCase()+'</div>';
+    return '<tr class="student-row"><td>'+photo+'</td>'
+      +'<td>'+s.name+'</td>'
+      +'<td><code style="font-size:12px;background:#f3f4f6;padding:2px 7px;border-radius:5px;">'+(s.studentId||'')+'</code></td>'
+      +'<td>'+(s.fatherName||'—')+'</td>'
+      +'<td><code style="font-size:12px;background:#f3f4f6;padding:2px 7px;border-radius:5px;">'+(s.parentId||'—')+'</code></td>'
+      +'<td>'+(s.grade||'—')+'</td>'
+      +'<td>'+(s.section||'—')+'</td>'
+      +'<td>'+(s.session||'—')+'</td>'
+      +'<td><div style="display:flex;gap:6px;">'
+      +'<button class="btn-secondary btn-sm" onclick="editStudent(\''+s.id+'\')">Edit</button>'
+      +'<button class="btn-danger btn-sm" onclick="deleteStudent(\''+s.id+'\',\''+s.name+'\')">Del</button>'
+      +'</div></td></tr>';
+  }).join('');
 }
 
 function filterStudents() {
-  const grade = document.getElementById('filterGrade').value;
-  const section = document.getElementById('filterSection').value;
-  const search = document.getElementById('searchStudent').value.toLowerCase();
-  const filtered = allStudents.filter(s=>{
+  var grade = document.getElementById('filterGrade').value;
+  var section = document.getElementById('filterSection').value;
+  var search = document.getElementById('searchStudent').value.toLowerCase();
+  renderStudentsTable(allStudents.filter(function(s) {
     if (grade && s.grade !== grade) return false;
     if (section && s.section !== section) return false;
     if (search && !(s.name||'').toLowerCase().includes(search) && !(s.studentId||'').toLowerCase().includes(search)) return false;
     return true;
-  });
-  renderStudentsTable(filtered);
+  }));
 }
 
-function openStudentModal(studentData=null) {
+function openStudentModal(studentData) {
   document.getElementById('studentModalTitle').textContent = studentData ? 'Edit Student' : 'Add Student';
   document.getElementById('studentDocId').value = studentData ? studentData.id : '';
-  document.getElementById('sName').value = studentData?.name || '';
-  document.getElementById('sFather').value = studentData?.fatherName || '';
-  document.getElementById('sId').value = studentData?.studentId || '';
-  document.getElementById('sParentId').value = studentData?.parentId || '';
-  document.getElementById('sGrade').value = studentData?.grade || '';
-  document.getElementById('sSection').value = studentData?.section || '';
-  document.getElementById('sSession').value = studentData?.session || '';
-  const preview = document.getElementById('photoPreview');
-  const placeholder = document.getElementById('photoPlaceholder');
-  const hint = document.getElementById('photoHint');
-  if (studentData?.photoURL) {
-    preview.src = studentData.photoURL;
-    preview.style.display = 'block';
-    placeholder.style.display = 'none';
-    hint.style.display = 'none';
+  document.getElementById('sName').value = studentData ? (studentData.name||'') : '';
+  document.getElementById('sFather').value = studentData ? (studentData.fatherName||'') : '';
+  document.getElementById('sId').value = studentData ? (studentData.studentId||'') : '';
+  document.getElementById('sParentId').value = studentData ? (studentData.parentId||'') : '';
+  document.getElementById('sGrade').value = studentData ? (studentData.grade||'') : '';
+  document.getElementById('sSection').value = studentData ? (studentData.section||'') : '';
+  document.getElementById('sSession').value = studentData ? (studentData.session||'') : '';
+  var preview = document.getElementById('photoPreview');
+  var placeholder = document.getElementById('photoPlaceholder');
+  var hint = document.getElementById('photoHint');
+  if (studentData && studentData.photoURL) {
+    preview.src = studentData.photoURL; preview.style.display='block';
+    placeholder.style.display='none'; hint.style.display='none';
   } else {
-    preview.style.display = 'none';
-    placeholder.style.display = 'block';
-    hint.style.display = 'block';
+    preview.style.display='none'; placeholder.style.display='block'; hint.style.display='block';
   }
   openModal('studentModal');
 }
 
 function editStudent(id) {
-  const s = allStudents.find(s=>s.id===id);
+  var s = allStudents.find(function(s){ return s.id===id; });
   if (s) openStudentModal(s);
 }
 
-async function deleteStudent(id, name) {
-  if (!confirm(`Delete student "${name}"?`)) return;
-  try {
-    await db.collection('students').doc(id).delete();
-    showToast(`Student "${name}" deleted.`);
+function deleteStudent(id, name) {
+  if (!confirm('Delete student "'+name+'"?')) return;
+  db.collection('students').doc(id).delete().then(function() {
+    showToast('Student "'+name+'" deleted.');
     loadAllStudents();
-  } catch(e) { showToast('Error deleting student.','error'); }
+  }).catch(function() { showToast('Error deleting student.','error'); });
 }
 
 function previewPhoto(event) {
-  const file = event.target.files[0];
+  var file = event.target.files[0];
   if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
+  var reader = new FileReader();
+  reader.onload = function(e) {
     document.getElementById('photoPreview').src = e.target.result;
     document.getElementById('photoPreview').style.display = 'block';
     document.getElementById('photoPlaceholder').style.display = 'none';
@@ -964,9 +927,9 @@ function previewPhoto(event) {
   reader.readAsDataURL(file);
 }
 
-async function saveStudent() {
-  const docId = document.getElementById('studentDocId').value;
-  const data = {
+function saveStudent() {
+  var docId = document.getElementById('studentDocId').value;
+  var data = {
     name: document.getElementById('sName').value.trim(),
     fatherName: document.getElementById('sFather').value.trim(),
     studentId: document.getElementById('sId').value.trim(),
@@ -979,464 +942,345 @@ async function saveStudent() {
   if (!data.name || !data.studentId || !data.grade || !data.section) {
     showToast('Please fill required fields (*)','error'); return;
   }
-  try {
-    const file = document.getElementById('photoInput').files[0];
-    if (file) {
-      const ref = storage.ref(`students/${data.studentId}_${Date.now()}`);
-      await ref.put(file);
-      data.photoURL = await ref.getDownloadURL();
-    } else if (docId) {
-      const existing = allStudents.find(s=>s.id===docId);
-      if (existing?.photoURL) data.photoURL = existing.photoURL;
+  var file = document.getElementById('photoInput').files[0];
+  var saveData = function(photoURL) {
+    if (photoURL) data.photoURL = photoURL;
+    else if (docId) {
+      var existing = allStudents.find(function(s){ return s.id===docId; });
+      if (existing && existing.photoURL) data.photoURL = existing.photoURL;
     }
-    if (docId) {
-      await db.collection('students').doc(docId).update(data);
-      showToast('Student updated!','success');
-    } else {
-      data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-      await db.collection('students').add(data);
-      showToast('Student added!','success');
-    }
-    closeModal('studentModal');
-    loadAllStudents();
-  } catch(e) { showToast('Error saving student: '+e.message,'error'); }
+    var promise = docId
+      ? db.collection('students').doc(docId).update(data)
+      : (function(){ data.createdAt = firebase.firestore.FieldValue.serverTimestamp(); return db.collection('students').add(data); })();
+    promise.then(function() {
+      showToast(docId ? 'Student updated!' : 'Student added!','success');
+      closeModal('studentModal');
+      loadAllStudents();
+    }).catch(function(e){ showToast('Error: '+e.message,'error'); });
+  };
+  if (file) {
+    var ref = storage.ref('students/'+data.studentId+'_'+Date.now());
+    ref.put(file).then(function(){ return ref.getDownloadURL(); }).then(saveData).catch(function(e){ showToast('Photo error: '+e.message,'error'); });
+  } else { saveData(null); }
 }
 
 // ─── ATTENDANCE ───
-async function loadAttendanceStudents() {
-  const grade = document.getElementById('attGrade').value;
-  const section = document.getElementById('attSection').value;
-  const date = document.getElementById('attDate').value;
+function loadAttendanceStudents() {
+  var grade = document.getElementById('attGrade').value;
+  var section = document.getElementById('attSection').value;
+  var date = document.getElementById('attDate').value;
   if (!grade || !section) {
-    document.getElementById('attendanceGrid').innerHTML = `<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:60px;">Select a grade and section.</div>`;
+    document.getElementById('attendanceGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:60px;">Select a grade and section.</div>';
     return;
   }
-  const filtered = allStudents.filter(s=>s.grade===grade && s.section===section);
+  var filtered = allStudents.filter(function(s){ return s.grade===grade && s.section===section; });
   if (!filtered.length) {
-    document.getElementById('attendanceGrid').innerHTML = `<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:60px;">No students in ${grade} – ${section}.</div>`;
+    document.getElementById('attendanceGrid').innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:60px;">No students in '+grade+' – '+section+'.</div>';
     return;
   }
-  // Load existing attendance for this date
   attendanceState = {};
   if (date) {
-    try {
-      const snap = await db.collection('attendance').doc(date).collection('records')
-        .where('grade','==',grade).where('section','==',section).get();
-      snap.docs.forEach(d=>{ attendanceState[d.data().studentId] = d.data().status; });
-    } catch(e) {}
-  }
-  renderAttendanceGrid(filtered);
+    db.collection('attendance').doc(date).collection('records')
+      .where('grade','==',grade).where('section','==',section).get()
+      .then(function(snap) {
+        snap.docs.forEach(function(d){ attendanceState[d.data().studentId] = d.data().status; });
+        renderAttendanceGrid(filtered);
+      }).catch(function(){ renderAttendanceGrid(filtered); });
+  } else { renderAttendanceGrid(filtered); }
 }
 
 function renderAttendanceGrid(students) {
-  const grid = document.getElementById('attendanceGrid');
-  grid.innerHTML = students.map(s=>`
-    <div class="att-card" id="attcard-${s.id}">
-      ${s.photoURL
-        ? `<img class="att-photo" src="${s.photoURL}" alt="${s.name}">`
-        : `<div class="att-photo">${(s.name||'?')[0].toUpperCase()}</div>`}
-      <div class="att-info">
-        <div class="att-name">${s.name}</div>
-        <div class="att-id">${s.studentId||s.id}</div>
-        <div class="att-btns">
-          <button class="att-btn P ${attendanceState[s.id]==='P'?'active':''}" onclick="setAtt('${s.id}','P')">P</button>
-          <button class="att-btn A ${attendanceState[s.id]==='A'?'active':''}" onclick="setAtt('${s.id}','A')">A</button>
-          <button class="att-btn AA ${attendanceState[s.id]==='AA'?'active':''}" onclick="setAtt('${s.id}','AA')">Auth</button>
-        </div>
-      </div>
-    </div>
-  `).join('');
+  var grid = document.getElementById('attendanceGrid');
+  grid.innerHTML = students.map(function(s) {
+    var photo = s.photoURL
+      ? '<img class="att-photo" src="'+s.photoURL+'" alt="'+s.name+'">'
+      : '<div class="att-photo">'+(s.name||'?')[0].toUpperCase()+'</div>';
+    var st = attendanceState[s.id] || '';
+    return '<div class="att-card" id="attcard-'+s.id+'">'+photo
+      +'<div class="att-info">'
+      +'<div class="att-name">'+s.name+'</div>'
+      +'<div class="att-id">'+(s.studentId||s.id)+'</div>'
+      +'<div class="att-btns">'
+      +'<button class="att-btn P'+(st==='P'?' active':'')+'" onclick="setAtt(\''+s.id+'\',\'P\')">P</button>'
+      +'<button class="att-btn A'+(st==='A'?' active':'')+'" onclick="setAtt(\''+s.id+'\',\'A\')">A</button>'
+      +'<button class="att-btn AA'+(st==='AA'?' active':'')+'" onclick="setAtt(\''+s.id+'\',\'AA\')">Auth</button>'
+      +'</div></div></div>';
+  }).join('');
 }
 
 function setAtt(studentId, status) {
   attendanceState[studentId] = status;
-  const card = document.getElementById('attcard-'+studentId);
+  var card = document.getElementById('attcard-'+studentId);
   if (!card) return;
-  card.querySelectorAll('.att-btn').forEach(b=>{
+  card.querySelectorAll('.att-btn').forEach(function(b){
     b.classList.toggle('active', b.classList.contains(status));
   });
 }
 
 function markAll(status) {
-  const grade = document.getElementById('attGrade').value;
-  const section = document.getElementById('attSection').value;
-  allStudents.filter(s=>s.grade===grade&&s.section===section).forEach(s=>{
-    setAtt(s.id, status);
-  });
+  var grade = document.getElementById('attGrade').value;
+  var section = document.getElementById('attSection').value;
+  allStudents.filter(function(s){ return s.grade===grade && s.section===section; })
+    .forEach(function(s){ setAtt(s.id, status); });
 }
 
-async function saveAttendance() {
-  const grade = document.getElementById('attGrade').value;
-  const section = document.getElementById('attSection').value;
-  const date = document.getElementById('attDate').value;
+function saveAttendance() {
+  var grade = document.getElementById('attGrade').value;
+  var section = document.getElementById('attSection').value;
+  var date = document.getElementById('attDate').value;
   if (!grade || !section || !date) { showToast('Select grade, section and date','error'); return; }
-  const students = allStudents.filter(s=>s.grade===grade&&s.section===section);
-  if (!students.length) { showToast('No students to save attendance for','error'); return; }
-  try {
-    const batch = db.batch();
-    students.forEach(s=>{
-      const status = attendanceState[s.id] || 'A';
-      const ref = db.collection('attendance').doc(date).collection('records').doc(s.id);
-      batch.set(ref, {
-        studentId: s.id, studentName: s.name, grade, section, date, status,
-        savedAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
-    });
-    await batch.commit();
-    showToast('Attendance saved!','success');
-  } catch(e) { showToast('Error saving attendance: '+e.message,'error'); }
+  var students = allStudents.filter(function(s){ return s.grade===grade && s.section===section; });
+  if (!students.length) { showToast('No students found','error'); return; }
+  var batch = db.batch();
+  students.forEach(function(s) {
+    var status = attendanceState[s.id] || 'A';
+    var ref = db.collection('attendance').doc(date).collection('records').doc(s.id);
+    batch.set(ref, { studentId:s.id, studentName:s.name, grade:grade, section:section, date:date, status:status, savedAt:firebase.firestore.FieldValue.serverTimestamp() });
+  });
+  batch.commit().then(function(){ showToast('Attendance saved!','success'); })
+    .catch(function(e){ showToast('Error: '+e.message,'error'); });
 }
 
 // ─── DASHBOARD ───
-async function loadDashboard() {
-  const dateStr = today();
-  let total=0, present=0, absent=0;
-  try {
-    total = allStudents.length;
-    const snap = await db.collection('attendance').doc(dateStr).collection('records').get();
-    const records = snap.docs.map(d=>d.data());
-    present = records.filter(r=>r.status==='P'||r.status==='AA').length;
-    absent = records.filter(r=>r.status==='A').length;
-  } catch(e) {}
-  document.getElementById('stat-total').textContent = total;
-  document.getElementById('stat-present').textContent = present;
-  document.getElementById('stat-absent').textContent = absent;
-  document.getElementById('stat-rate').textContent = total > 0 ? Math.round(present/total*100)+'%' : '—';
+function loadDashboard() {
+  var dateStr = today();
+  document.getElementById('stat-total').textContent = allStudents.length;
+  db.collection('attendance').doc(dateStr).collection('records').get().then(function(snap) {
+    var records = snap.docs.map(function(d){ return d.data(); });
+    var present = records.filter(function(r){ return r.status==='P'||r.status==='AA'; }).length;
+    var absent = records.filter(function(r){ return r.status==='A'; }).length;
+    document.getElementById('stat-present').textContent = present;
+    document.getElementById('stat-absent').textContent = absent;
+    document.getElementById('stat-rate').textContent = allStudents.length > 0 ? Math.round(present/allStudents.length*100)+'%' : '—';
+  }).catch(function(){
+    document.getElementById('stat-present').textContent = '—';
+    document.getElementById('stat-absent').textContent = '—';
+    document.getElementById('stat-rate').textContent = '—';
+  });
   renderWeeklyChart();
   renderClassChart();
 }
 
-async function renderWeeklyChart() {
-  const labels = [];
-  const data = [];
-  for (let i=6; i>=0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate()-i);
-    const ds = d.toISOString().slice(0,10);
+function renderWeeklyChart() {
+  var labels = [], promises = [];
+  for (var i=6; i>=0; i--) {
+    var d = new Date(); d.setDate(d.getDate()-i);
     labels.push(d.toLocaleDateString('en',{weekday:'short'}));
-    let rate = 0;
-    try {
-      const snap = await db.collection('attendance').doc(ds).collection('records').get();
-      const recs = snap.docs.map(d=>d.data());
-      const eff = recs.filter(r=>r.status==='P'||r.status==='AA').length;
-      rate = recs.length > 0 ? Math.round(eff/recs.length*100) : 0;
-    } catch(e) {}
-    data.push(rate);
+    promises.push(db.collection('attendance').doc(d.toISOString().slice(0,10)).collection('records').get());
   }
-  const ctx = document.getElementById('weeklyChart');
-  if (!ctx) return;
-  if (weeklyChartInst) weeklyChartInst.destroy();
-  weeklyChartInst = new Chart(ctx, {
-    type:'bar',
-    data:{
-      labels,
-      datasets:[{
-        label:'Attendance %',
-        data,
-        backgroundColor:'rgba(79,126,248,.2)',
-        borderColor:'rgba(79,126,248,1)',
-        borderWidth:2,
-        borderRadius:6
-      }]
-    },
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%'}}},
-      plugins:{legend:{display:false}}
-    }
-  });
+  Promise.all(promises).then(function(snaps) {
+    var data = snaps.map(function(snap) {
+      var recs = snap.docs.map(function(d){ return d.data(); });
+      var eff = recs.filter(function(r){ return r.status==='P'||r.status==='AA'; }).length;
+      return recs.length > 0 ? Math.round(eff/recs.length*100) : 0;
+    });
+    var ctx = document.getElementById('weeklyChart');
+    if (!ctx) return;
+    if (weeklyChartInst) weeklyChartInst.destroy();
+    weeklyChartInst = new Chart(ctx, {
+      type:'bar', data:{ labels:labels, datasets:[{ label:'Attendance %', data:data,
+        backgroundColor:'rgba(79,126,248,.2)', borderColor:'rgba(79,126,248,1)', borderWidth:2, borderRadius:6 }] },
+      options:{ responsive:true, maintainAspectRatio:false,
+        scales:{y:{min:0,max:100,ticks:{callback:function(v){return v+'%';}}}}, plugins:{legend:{display:false}} }
+    });
+  }).catch(function(){});
 }
 
-async function renderClassChart() {
-  const dateStr = today();
-  const gradeRates = {};
-  try {
-    const snap = await db.collection('attendance').doc(dateStr).collection('records').get();
-    snap.docs.forEach(d=>{
-      const r = d.data();
+function renderClassChart() {
+  db.collection('attendance').doc(today()).collection('records').get().then(function(snap) {
+    var gradeRates = {};
+    snap.docs.forEach(function(d) {
+      var r = d.data();
       if (!gradeRates[r.grade]) gradeRates[r.grade] = {eff:0,total:0};
       gradeRates[r.grade].total++;
       if (r.status==='P'||r.status==='AA') gradeRates[r.grade].eff++;
     });
-  } catch(e) {}
-  const labels = Object.keys(gradeRates);
-  const data = labels.map(g=>gradeRates[g].total>0?Math.round(gradeRates[g].eff/gradeRates[g].total*100):0);
-  const ctx = document.getElementById('classChart');
-  if (!ctx) return;
-  if (classChartInst) classChartInst.destroy();
-  classChartInst = new Chart(ctx, {
-    type:'doughnut',
-    data:{
-      labels: labels.length ? labels : ['No Data'],
-      datasets:[{
-        data: labels.length ? data : [100],
-        backgroundColor: labels.length
-          ? labels.map((_,i)=>`hsl(${210+i*25},70%,${55+i*5}%)`)
-          : ['#e5e7eb'],
-        borderWidth:0
-      }]
-    },
-    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right'}}}
-  });
+    var labels = Object.keys(gradeRates);
+    var data = labels.map(function(g){ return gradeRates[g].total>0?Math.round(gradeRates[g].eff/gradeRates[g].total*100):0; });
+    var ctx = document.getElementById('classChart');
+    if (!ctx) return;
+    if (classChartInst) classChartInst.destroy();
+    classChartInst = new Chart(ctx, {
+      type:'doughnut',
+      data:{ labels: labels.length?labels:['No Data'], datasets:[{ data:labels.length?data:[100],
+        backgroundColor:labels.length?labels.map(function(_,i){return 'hsl('+(210+i*25)+',70%,'+(55+i*5)+'%)';}):['#e5e7eb'], borderWidth:0 }] },
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right'}}}
+    });
+  }).catch(function(){});
 }
 
 // ─── DAILY REPORT ───
-async function loadDailyReport() {
-  const date = document.getElementById('rptDate').value;
-  const grade = document.getElementById('rptGrade').value;
-  const section = document.getElementById('rptSection').value;
+function loadDailyReport() {
+  var date = document.getElementById('rptDate').value;
+  var grade = document.getElementById('rptGrade').value;
+  var section = document.getElementById('rptSection').value;
   if (!date) return;
-  document.getElementById('rptTitle').textContent = `Daily Report — ${date}${grade?' | '+grade:''}${section?' '+section:''}`;
-  let query = db.collection('attendance').doc(date).collection('records');
+  document.getElementById('rptTitle').textContent = 'Daily Report — '+date+(grade?' | '+grade:'')+(section?' '+section:'');
+  var query = db.collection('attendance').doc(date).collection('records');
   if (grade) query = query.where('grade','==',grade);
   if (section) query = query.where('section','==',section);
-  let records = [];
-  try {
-    const snap = await query.get();
-    records = snap.docs.map(d=>d.data());
-  } catch(e) {}
-  const total = records.length;
-  const present = records.filter(r=>r.status==='P').length;
-  const authAbsent = records.filter(r=>r.status==='AA').length;
-  const absent = records.filter(r=>r.status==='A').length;
-  const effPresent = present + authAbsent;
-  document.getElementById('rpt-total').textContent = total||'—';
-  document.getElementById('rpt-present').textContent = effPresent||'—';
-  document.getElementById('rpt-absent').textContent = absent||'—';
-  document.getElementById('rpt-rate').textContent = total>0?Math.round(effPresent/total*100)+'%':'—';
-  const tbody = document.getElementById('dailyReportBody');
-  if (!records.length) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px;">No attendance records for this date/filter.</td></tr>`;
-    return;
-  }
-  tbody.innerHTML = records.map(r=>{
-    const statusMap = {P:'Present',A:'Absent',AA:'Auth Absent'};
-    const badgeMap = {P:'badge-present',A:'badge-absent',AA:'badge-auth'};
-    const counted = (r.status==='P'||r.status==='AA')?'Present':'Absent';
-    return `<tr>
-      <td>${r.studentName||r.studentId}</td>
-      <td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px;">${r.studentId||'—'}</code></td>
-      <td>${r.grade||'—'}</td><td>${r.section||'—'}</td>
-      <td><span class="badge ${badgeMap[r.status]}">${statusMap[r.status]||r.status}</span></td>
-      <td><span class="badge ${counted==='Present'?'badge-present':'badge-absent'}">${counted}</span></td>
-    </tr>`;
-  }).join('');
+  query.get().then(function(snap) {
+    var records = snap.docs.map(function(d){ return d.data(); });
+    var present = records.filter(function(r){ return r.status==='P'; }).length;
+    var authAbsent = records.filter(function(r){ return r.status==='AA'; }).length;
+    var absent = records.filter(function(r){ return r.status==='A'; }).length;
+    var eff = present + authAbsent;
+    var total = records.length;
+    document.getElementById('rpt-total').textContent = total||'—';
+    document.getElementById('rpt-present').textContent = eff||'—';
+    document.getElementById('rpt-absent').textContent = absent||'—';
+    document.getElementById('rpt-rate').textContent = total>0?Math.round(eff/total*100)+'%':'—';
+    var tbody = document.getElementById('dailyReportBody');
+    if (!records.length) { tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px;">No records for this date.</td></tr>'; return; }
+    var statusMap = {P:'Present',A:'Absent',AA:'Auth Absent'};
+    var badgeMap = {P:'badge-present',A:'badge-absent',AA:'badge-auth'};
+    tbody.innerHTML = records.map(function(r) {
+      var counted = (r.status==='P'||r.status==='AA')?'Present':'Absent';
+      return '<tr><td>'+(r.studentName||r.studentId)+'</td>'
+        +'<td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px;">'+(r.studentId||'—')+'</code></td>'
+        +'<td>'+(r.grade||'—')+'</td><td>'+(r.section||'—')+'</td>'
+        +'<td><span class="badge '+badgeMap[r.status]+'">'+(statusMap[r.status]||r.status)+'</span></td>'
+        +'<td><span class="badge '+(counted==='Present'?'badge-present':'badge-absent')+'">'+counted+'</span></td></tr>';
+    }).join('');
+  }).catch(function(e){ showToast('Error loading report: '+e.message,'error'); });
 }
 
 // ─── MONTHLY REPORT ───
-async function loadMonthlyReport() {
-  const month = document.getElementById('rptMonth').value;
-  const grade = document.getElementById('rptMGrade').value;
-  const section = document.getElementById('rptMSection').value;
+function loadMonthlyReport() {
+  var month = document.getElementById('rptMonth').value;
+  var grade = document.getElementById('rptMGrade').value;
+  var section = document.getElementById('rptMSection').value;
   if (!month) return;
-  const [yr, mo] = month.split('-');
-  const daysInMonth = new Date(yr, mo, 0).getDate();
-  const studentSummary = {};
-  for (let d=1; d<=daysInMonth; d++) {
-    const dateStr = `${yr}-${mo.padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    try {
-      let q = db.collection('attendance').doc(dateStr).collection('records');
-      if (grade) q = q.where('grade','==',grade);
-      if (section) q = q.where('section','==',section);
-      const snap = await q.get();
-      snap.docs.forEach(doc=>{
-        const r = doc.data();
-        if (!studentSummary[r.studentId]) {
-          studentSummary[r.studentId] = {name:r.studentName||r.studentId,id:r.studentId,grade:r.grade,section:r.section,P:0,A:0,AA:0};
-        }
+  var parts = month.split('-'); var yr = parts[0]; var mo = parts[1];
+  var daysInMonth = new Date(parseInt(yr), parseInt(mo), 0).getDate();
+  var studentSummary = {};
+  var promises = [];
+  for (var d=1; d<=daysInMonth; d++) {
+    var dateStr = yr+'-'+mo.padStart(2,'0')+'-'+String(d).padStart(2,'0');
+    var q = db.collection('attendance').doc(dateStr).collection('records');
+    if (grade) q = q.where('grade','==',grade);
+    if (section) q = q.where('section','==',section);
+    promises.push(q.get());
+  }
+  Promise.all(promises).then(function(snaps) {
+    snaps.forEach(function(snap) {
+      snap.docs.forEach(function(doc) {
+        var r = doc.data();
+        if (!studentSummary[r.studentId]) studentSummary[r.studentId] = {name:r.studentName||r.studentId,id:r.studentId,grade:r.grade,section:r.section,P:0,A:0,AA:0};
         studentSummary[r.studentId][r.status]++;
       });
-    } catch(e) {}
-  }
-  const rows = Object.values(studentSummary);
-  const tbody = document.getElementById('monthlyReportBody');
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px;">No data found for ${month}.</td></tr>`;
-    return;
-  }
-  tbody.innerHTML = rows.map(r=>{
-    const total = r.P+r.A+r.AA;
-    const eff = r.P+r.AA;
-    const rate = total>0?Math.round(eff/total*100):0;
-    return `<tr>
-      <td>${r.name}</td>
-      <td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px;">${r.id}</code></td>
-      <td>${r.grade}</td><td>${r.section}</td>
-      <td>${r.P}</td><td>${r.A}</td><td>${r.AA}</td>
-      <td><strong>${eff}</strong></td>
-      <td>
-        <div style="display:flex;align-items:center;gap:8px;min-width:80px;">
-          <span>${rate}%</span>
-          <div class="progress-bar" style="flex:1;">
-            <div class="progress-fill" style="width:${rate}%;"></div>
-          </div>
-        </div>
-      </td>
-    </tr>`;
-  }).join('');
-  // Monthly chart
-  document.getElementById('monthlyChartCard').style.display = 'block';
-  const ctx = document.getElementById('monthlyChart');
-  if (monthlyChartInst) monthlyChartInst.destroy();
-  const names = rows.slice(0,15).map(r=>r.name.split(' ')[0]);
-  const rates = rows.slice(0,15).map(r=>{
-    const total = r.P+r.A+r.AA;
-    return total>0?Math.round((r.P+r.AA)/total*100):0;
-  });
-  monthlyChartInst = new Chart(ctx, {
-    type:'bar',
-    data:{
-      labels:names,
-      datasets:[{
-        label:'Effective Attendance %',
-        data:rates,
-        backgroundColor:rates.map(v=>v>=90?'rgba(56,196,160,.7)':v>=75?'rgba(79,126,248,.7)':'rgba(231,76,60,.7)'),
-        borderRadius:4
-      }]
-    },
-    options:{
-      responsive:true, maintainAspectRatio:false,
-      scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%'}}},
-      plugins:{legend:{display:false}}
-    }
-  });
+    });
+    var rows = Object.values(studentSummary);
+    var tbody = document.getElementById('monthlyReportBody');
+    if (!rows.length) { tbody.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:40px;">No data for '+month+'.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(function(r) {
+      var total = r.P+r.A+r.AA; var eff = r.P+r.AA;
+      var rate = total>0?Math.round(eff/total*100):0;
+      return '<tr><td>'+r.name+'</td>'
+        +'<td><code style="font-size:11px;background:#f3f4f6;padding:2px 6px;border-radius:4px;">'+r.id+'</code></td>'
+        +'<td>'+r.grade+'</td><td>'+r.section+'</td>'
+        +'<td>'+r.P+'</td><td>'+r.A+'</td><td>'+r.AA+'</td>'
+        +'<td><strong>'+eff+'</strong></td>'
+        +'<td><div style="display:flex;align-items:center;gap:8px;min-width:80px;"><span>'+rate+'%</span>'
+        +'<div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:'+rate+'%;"></div></div></div></td></tr>';
+    }).join('');
+    document.getElementById('monthlyChartCard').style.display = 'block';
+    var ctx = document.getElementById('monthlyChart');
+    if (monthlyChartInst) monthlyChartInst.destroy();
+    var names = rows.slice(0,15).map(function(r){ return r.name.split(' ')[0]; });
+    var rates = rows.slice(0,15).map(function(r){ var t=r.P+r.A+r.AA; return t>0?Math.round((r.P+r.AA)/t*100):0; });
+    monthlyChartInst = new Chart(ctx, {
+      type:'bar', data:{ labels:names, datasets:[{ label:'Attendance %', data:rates,
+        backgroundColor:rates.map(function(v){ return v>=90?'rgba(56,196,160,.7)':v>=75?'rgba(79,126,248,.7)':'rgba(231,76,60,.7)'; }), borderRadius:4 }] },
+      options:{ responsive:true, maintainAspectRatio:false,
+        scales:{y:{min:0,max:100,ticks:{callback:function(v){return v+'%';}}}}, plugins:{legend:{display:false}} }
+    });
+  }).catch(function(e){ showToast('Error: '+e.message,'error'); });
 }
 
-// ─── USERS ───
-async function loadUsers() {
-  if (currentUserData?.role !== 'admin') return;
-  const grid = document.getElementById('usersGrid');
+// ─── USERS / ADMIN ───
+function loadUsers() {
+  if (!currentUserData || currentUserData.role !== 'admin') return;
+  var grid = document.getElementById('usersGrid');
   grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">Loading...</div>';
-  try {
-    const snap = await db.collection('users').get();
-    const users = snap.docs.map(d=>({id:d.id,...d.data()}));
-    if (!users.length) {
-      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">No users found.</div>';
-      return;
-    }
-    const roleColors = {admin:'badge-admin',teacher:'badge-teacher',staff:'badge-staff'};
-    grid.innerHTML = users.map(u=>`
-      <div class="user-card">
-        <div class="avatar" style="background:${u.role==='admin'?'#7c3aed':u.role==='teacher'?'#059669':'#d97706'};font-size:16px;">
-          ${(u.name||u.email||'U')[0].toUpperCase()}
-        </div>
-        <div class="user-card-info">
-          <div class="user-card-name">${u.name||'—'}</div>
-          <div class="user-card-email">${u.email||'—'}</div>
-          ${u.grade?`<div style="font-size:11px;color:var(--muted);margin-top:2px;">${u.grade}${u.section?' – '+u.section:''}</div>`:''}
-        </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
-          <span class="badge ${roleColors[u.role]||'badge-staff'}">${u.role||'staff'}</span>
-          ${u.id !== currentUser.uid ? `<button class="btn-danger btn-sm" onclick="deleteUser('${u.id}','${u.name||u.email}')">Delete</button>` : '<span style="font-size:11px;color:var(--muted);">You</span>'}
-        </div>
-      </div>
-    `).join('');
-  } catch(e) {
-    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:var(--danger);padding:40px;">${e.message}</div>`;
-  }
+  db.collection('users').get().then(function(snap) {
+    var users = snap.docs.map(function(d){ return Object.assign({id:d.id},d.data()); });
+    if (!users.length) { grid.innerHTML='<div style="grid-column:1/-1;text-align:center;color:var(--muted);padding:40px;">No users found.</div>'; return; }
+    var roleColors = {admin:'badge-admin',teacher:'badge-teacher',staff:'badge-staff'};
+    var roleBg = {admin:'#7c3aed',teacher:'#059669',staff:'#d97706'};
+    grid.innerHTML = users.map(function(u) {
+      var bg = roleBg[u.role]||'#6b7280';
+      return '<div class="user-card">'
+        +'<div class="avatar" style="background:'+bg+';font-size:16px;">'+(u.name||u.email||'U')[0].toUpperCase()+'</div>'
+        +'<div class="user-card-info">'
+        +'<div class="user-card-name">'+(u.name||'—')+'</div>'
+        +'<div class="user-card-email">'+(u.email||'—')+'</div>'
+        +(u.grade?'<div style="font-size:11px;color:var(--muted);margin-top:2px;">'+u.grade+(u.section?' – '+u.section:'')+'</div>':'')
+        +'</div>'
+        +'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">'
+        +'<span class="badge '+(roleColors[u.role]||'badge-staff')+'">'+(u.role||'staff')+'</span>'
+        +(u.id!==currentUser.uid?'<button class="btn-danger btn-sm" onclick="deleteUser(\''+u.id+'\',\''+u.name+'\')">Delete</button>':'<span style="font-size:11px;color:var(--muted);">You</span>')
+        +'</div></div>';
+    }).join('');
+  }).catch(function(e){ grid.innerHTML='<div style="color:var(--danger);padding:20px;">'+e.message+'</div>'; });
 }
 
 function openUserModal() {
-  document.getElementById('uName').value='';
-  document.getElementById('uEmail').value='';
-  document.getElementById('uPassword').value='';
+  ['uName','uEmail','uPassword'].forEach(function(id){ document.getElementById(id).value=''; });
   document.getElementById('uRole').value='teacher';
   document.getElementById('uGrade').value='';
   document.getElementById('uSection').value='';
   openModal('userModal');
 }
 
-async function saveUser() {
-  const name = document.getElementById('uName').value.trim();
-  const email = document.getElementById('uEmail').value.trim();
-  const pass = document.getElementById('uPassword').value;
-  const role = document.getElementById('uRole').value;
-  const grade = document.getElementById('uGrade').value;
-  const section = document.getElementById('uSection').value;
+function saveUser() {
+  var name = document.getElementById('uName').value.trim();
+  var email = document.getElementById('uEmail').value.trim();
+  var pass = document.getElementById('uPassword').value;
+  var role = document.getElementById('uRole').value;
+  var grade = document.getElementById('uGrade').value;
+  var section = document.getElementById('uSection').value;
   if (!name||!email||!pass) { showToast('Name, email and password required','error'); return; }
   if (pass.length < 6) { showToast('Password must be 6+ characters','error'); return; }
+  var secondary;
   try {
-    // Create user in Firebase Auth via secondary app instance
-    const secondary = firebase.initializeApp(FIREBASE_CONFIG,'secondary'+Date.now());
-    const secAuth = secondary.auth();
-    const cred = await secAuth.createUserWithEmailAndPassword(email, pass);
-    await db.collection('users').doc(cred.user.uid).set({
-      name, email, role, grade, section,
-      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      createdBy: currentUser.uid
+    secondary = firebase.initializeApp(FIREBASE_CONFIG, 'secondary'+Date.now());
+  } catch(e) { showToast('Error: '+e.message,'error'); return; }
+  secondary.auth().createUserWithEmailAndPassword(email, pass).then(function(cred) {
+    return db.collection('users').doc(cred.user.uid).set({
+      name:name, email:email, role:role, grade:grade, section:section,
+      createdAt:firebase.firestore.FieldValue.serverTimestamp(), createdBy:currentUser.uid
+    }).then(function() {
+      secondary.auth().signOut();
+      secondary.delete();
+      closeModal('userModal');
+      showToast('User "'+name+'" created!','success');
+      loadUsers();
     });
-    await secAuth.signOut();
-    await secondary.delete();
-    closeModal('userModal');
-    showToast(`User "${name}" created!`,'success');
-    loadUsers();
-  } catch(e) { showToast('Error: '+e.message,'error'); }
+  }).catch(function(e) { showToast('Error: '+e.message,'error'); });
 }
 
-async function deleteUser(uid, name) {
-  if (!confirm(`Delete user "${name}"? This removes their Firestore data (auth account must be removed from Firebase Console).`)) return;
-  try {
-    await db.collection('users').doc(uid).delete();
-    showToast(`User "${name}" removed from records.`);
+function deleteUser(uid, name) {
+  if (!confirm('Delete user "'+name+'"?')) return;
+  db.collection('users').doc(uid).delete().then(function() {
+    showToast('User "'+name+'" removed.');
     loadUsers();
-  } catch(e) { showToast('Error: '+e.message,'error'); }
+  }).catch(function(e){ showToast('Error: '+e.message,'error'); });
 }
 
-// ─── PRINT ───
-function printReport() {
-  window.print();
-}
+function printReport() { window.print(); }
 
 // ─── INIT DATE FIELDS ───
 document.getElementById('rptDate').value = today();
 document.getElementById('rptMonth').value = today().slice(0,7);
 
-// ─── HANDLE DEMO MODE (no firebase config) ───
-if (IS_DEMO || !auth) {
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('appShell').style.display = 'flex';
-  currentUser = { uid:'demo', email:'admin@school.edu' };
-  currentUserData = { name:'Admin User', role:'admin' };
-  allStudents = [
-    {id:'s1',name:'Ahmed Al Rashid',fatherName:'Mohammed Al Rashid',studentId:'STU-001',parentId:'PAR-001',grade:'Grade 5',section:'A',session:'2024-2025'},
-    {id:'s2',name:'Fatima Hassan',fatherName:'Hassan Al Noor',studentId:'STU-002',parentId:'PAR-002',grade:'Grade 5',section:'A',session:'2024-2025'},
-    {id:'s3',name:'Omar Khalid',fatherName:'Khalid Al Mansoori',studentId:'STU-003',parentId:'PAR-003',grade:'Grade 5',section:'B',session:'2024-2025'},
-    {id:'s4',name:'Sara Mahmoud',fatherName:'Mahmoud Ibrahim',studentId:'STU-004',parentId:'PAR-004',grade:'KG1',section:'A',session:'2024-2025'},
-    {id:'s5',name:'Ali Abdullah',fatherName:'Abdullah Al Zaabi',studentId:'STU-005',parentId:'PAR-005',grade:'KG1',section:'A',session:'2024-2025'},
-  ];
-  document.getElementById('configNotice').style.display='block';
-  populateGradeDropdowns();
-  populateSectionDropdowns();
-  document.getElementById('todayDate').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-  document.getElementById('sidebarName').textContent = 'Admin User';
-  document.getElementById('sidebarRole').textContent = 'Administrator';
-  document.getElementById('sidebarAvatar').textContent = 'A';
-  document.getElementById('stat-total').textContent = allStudents.length;
-  document.getElementById('stat-present').textContent = 4;
-  document.getElementById('stat-absent').textContent = 1;
-  document.getElementById('stat-rate').textContent = '80%';
-  document.getElementById('attDate').value = today();
-  renderStudentsTable(allStudents);
-  showPage('dashboard');
-  setTimeout(()=>{
-    if (typeof Chart !== 'undefined') {
-      const wCtx = document.getElementById('weeklyChart');
-      if (wCtx) {
-        new Chart(wCtx,{type:'bar',data:{labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],datasets:[{label:'%',data:[88,92,85,90,82,0,0],backgroundColor:'rgba(79,126,248,.2)',borderColor:'rgba(79,126,248,1)',borderWidth:2,borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%'}}},plugins:{legend:{display:false}}}});
-      }
-      const cCtx = document.getElementById('classChart');
-      if (cCtx) {
-        new Chart(cCtx,{type:'doughnut',data:{labels:['KG1','Grade 5'],datasets:[{data:[100,80],backgroundColor:['#4f7ef8','#38c4a0'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'right'}}}});
-      }
-    }
-  }, 400);
-}
-
 // ─── RESPONSIVE ───
-window.addEventListener('resize',()=>{
+window.addEventListener('resize', function(){
   document.getElementById('menuBtn').style.display = window.innerWidth<768?'block':'none';
 });
 if (window.innerWidth < 768) document.getElementById('menuBtn').style.display = 'block';
 </script>
+
+
 </body>
 </html>
